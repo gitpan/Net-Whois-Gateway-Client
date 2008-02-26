@@ -5,13 +5,8 @@ use POE qw(Component::Client::TCP Filter::Reference);
 #use Data::Dumper;
 use Carp;
 
-require Exporter;
-our @ISA = qw(Exporter);
-our @EXPORT = qw(whois_list);
-
-our $VERSION = 0.01;
-
-our ($DEBUG);
+our $VERSION = 0.04;
+our $DEBUG = 0;
 
 our $default_host = "localhost";
 our $default_port = 54321;
@@ -122,6 +117,8 @@ Net::Whois::Gateway::Client - it's an interface to Net::Whois::Gateway::Server,
 which  provides a very quick way to get WHOIS-info for list of domains, IPs or registrars.
 Internally uses POE to run parallel non-blocking queries to whois-servers.
 Supports recursive queries, cache, queries to HTTP-servers.
+
+You definitely need install Net::Whois::Gateway::Server first, to use Net::Whois::Gateway::Client.
 
 =head1 Functions
 
