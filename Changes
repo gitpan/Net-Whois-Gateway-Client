@@ -1,3 +1,5 @@
 0.04	Feb 26 2008	Sergey Kotenko
 	- Tests added.
 	- Updated documentation.
+0.05	Mar 08 2008	Sergey Kotenko
+	- Added %POSTPROCESS

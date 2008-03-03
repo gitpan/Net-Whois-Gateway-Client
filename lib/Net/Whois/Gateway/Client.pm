@@ -5,9 +5,10 @@ use POE qw(Component::Client::TCP Filter::Reference);
 #use Data::Dumper;
 use Carp;
 
-our $VERSION = 0.04;
+our $VERSION = 0.05;
 our $DEBUG = 0;
 
+our %POSTPROCESS;
 our $default_host = "localhost";
 our $default_port = 54321;
 our @answer;
@@ -31,6 +32,7 @@ sub whois {
         Args          => [ \%params ],
     );
     $poe_kernel->run();
+    @answer = apply_postprocess(@answer);
     return @answer;
 }
 
@@ -61,6 +63,21 @@ sub got_answer {
     my ($kernel, $heap, $input) = @_[KERNEL, HEAP, ARG0];
     @answer = @$input;
     $kernel->yield('shutdown');    
+}
+
+sub apply_postprocess {
+    my @all_results = @_;
+    my @out_results;
+    
+    foreach my $result ( @all_results ) {
+        my $server = $result->{server};
+        if ($result->{whois} && defined $POSTPROCESS{$server}) {
+            $result->{whois} = $POSTPROCESS{$server}->($result->{whois});
+        }
+        push @out_results, $result;
+    }
+    
+    return @out_results;
 }
 
 1;
@@ -220,6 +237,12 @@ Default '/tmp/whois-gateway-d'.
 =item cache_time
 
 Number of minutes to save cache. Default 1 minute.
+
+=head1 Postrprocessing
+
+Call to a user-defined subroutine on each whois result depending on whois-server supported:
+
+    $Net::Whois::Gateway::Client::POSTPROCESS{whois.crsnic.net} = \&my_func;
 
 =head1 AUTHOR
 
