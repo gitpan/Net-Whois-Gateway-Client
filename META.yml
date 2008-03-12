@@ -1,6 +1,6 @@
 ---
 name: Net-Whois-Gateway-Client
-version: 0.06
+version: 0.07
 author:
   - 'Sergey Kotenko <graykot@gmail.com>'
 abstract: Interface to Net::Whois::Gateway::Server
@@ -14,7 +14,7 @@ requires:
 provides:
   Net::Whois::Gateway::Client:
     file: lib/Net/Whois/Gateway/Client.pm
-    version: 0.06
+    version: 0.07
 generated_by: Module::Build version 0.2808
 meta-spec:
   url: http://module-build.sourceforge.net/META-spec-v1.2.html

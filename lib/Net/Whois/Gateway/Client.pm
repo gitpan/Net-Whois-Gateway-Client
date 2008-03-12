@@ -5,7 +5,7 @@ use POE qw(Component::Client::TCP Filter::Reference);
 #use Data::Dumper;
 use Carp;
 
-our $VERSION = 0.06;
+our $VERSION = 0.07;
 our $DEBUG = 0;
 
 our %POSTPROCESS;
@@ -36,10 +36,19 @@ sub whois {
     return @answer;
 }
 
+sub ping {    
+    my %params = (ping => 1);
+    my $res;
+    eval {
+        $res = whois(%params);
+    };
+    return $res;
+}
+
 # client starts
 sub starting_client {
     my ($heap, $params) = @_[HEAP, ARG0];
-    $heap->{params}  = $params;
+    $heap->{params} = $params;
 }
 
 # send request to gateway
