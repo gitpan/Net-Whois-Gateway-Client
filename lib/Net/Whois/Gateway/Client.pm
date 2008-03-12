@@ -5,7 +5,7 @@ use POE qw(Component::Client::TCP Filter::Reference);
 #use Data::Dumper;
 use Carp;
 
-our $VERSION = 0.05;
+our $VERSION = 0.06;
 our $DEBUG = 0;
 
 our %POSTPROCESS;
@@ -38,8 +38,7 @@ sub whois {
 
 # client starts
 sub starting_client {
-    my ($heap, $queries, $params) = @_[HEAP, ARG0, ARG1];
-    $heap->{queries} = $queries;
+    my ($heap, $params) = @_[HEAP, ARG0];
     $heap->{params}  = $params;
 }
 
@@ -47,7 +46,7 @@ sub starting_client {
 sub send_whois_request {
     my $heap = $_[HEAP];
     #print "connected to $host:$port ...\n" if $DEBUG;
-    $heap->{server}->put( [$heap->{queries}, $heap->{params}] );
+    $heap->{server}->put( [$heap->{params}] );
 };
 
 # error connectiong to gateway
