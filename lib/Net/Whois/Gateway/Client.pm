@@ -1,11 +1,14 @@
 package Net::Whois::Gateway::Client;
 
 use strict;
-use POE qw(Component::Client::TCP Filter::Reference);
 #use Data::Dumper;
 use Carp;
+use IO::Socket::INET;
 
-our $VERSION = 0.07;
+require bytes;
+require Storable;
+
+our $VERSION = 0.08;
 our $DEBUG = 0;
 
 our %POSTPROCESS;
@@ -13,64 +16,63 @@ our $default_host = "localhost";
 our $default_port = 54321;
 our @answer;
 
+our %SOCKET_FACTORY;
+
 # get whois info from gateway
 # %param: queries*, params
 sub whois {    
     my %params = @_;
-    my $gateway_host = delete $params{gateway_host} || $default_host;
-    my $gateway_port = delete $params{gateway_port} || $default_port;
-    
-    @answer = ();
-    POE::Component::Client::TCP->new(
-        RemoteAddress => $gateway_host,
-        RemotePort    => $gateway_port,
-        Filter        => "POE::Filter::Reference",
-        Connected     => \&send_whois_request,
-        ConnectError  => \&connection_error,
-        ServerInput   => \&got_answer,
-        Started       => \&starting_client,
-        Args          => [ \%params ],
-    );
-    $poe_kernel->run();
-    @answer = apply_postprocess(@answer);
-    return @answer;
+    my $socket = _get_socket( \%params ) or die "WHOIS: cannot open socket";
+
+    my $frozen = Storable::nfreeze( [ \%params ] );
+    $frozen = bytes::length( $frozen ). "\0" . $frozen;
+
+    $socket->syswrite( $frozen, bytes::length( $frozen ) )
+	or die "WHOIS: Cannot syswrite to socket";
+
+    $socket->sysread( my $BUFFER, 65536 ) >= 0
+	or die "WHOIS: Cannot sysread from socket";
+
+    my @answer;
+
+    if ( 
+	$BUFFER =~ /^(\d+)\0/o and 
+	bytes::length( $BUFFER ) >= $1 + bytes::length($1) + 1 
+    ) {
+	my $answer = Storable::thaw( substr( $BUFFER, bytes::length($1) + 1, $1 ) );
+	@answer = @$answer;
+    } else {
+	die "WHOIS: Cannot parse BUFFER";
+    }
+
+    return apply_postprocess(@answer);
 }
 
-sub ping {    
+sub _get_socket {
+    my $params = shift;
+    my $gateway_host = delete $params->{gateway_host} || $default_host;
+    my $gateway_port = delete $params->{gateway_port} || $default_port;
+
+    my $addr = $gateway_host.':'.$gateway_port;
+
+    return $SOCKET_FACTORY{ $addr } if $SOCKET_FACTORY{ $addr };
+
+    return $SOCKET_FACTORY{ $addr } = IO::Socket::INET->new( $addr );
+}
+
+sub close_sockets {
+    $_->close() foreach values %SOCKET_FACTORY;
+    %SOCKET_FACTORY = ();
+}
+
+
+sub ping {
     my %params = (ping => 1);
     my $res;
     eval {
         $res = whois(%params);
     };
     return $res;
-}
-
-# client starts
-sub starting_client {
-    my ($heap, $params) = @_[HEAP, ARG0];
-    $heap->{params} = $params;
-}
-
-# send request to gateway
-sub send_whois_request {
-    my $heap = $_[HEAP];
-    #print "connected to $host:$port ...\n" if $DEBUG;
-    $heap->{server}->put( [$heap->{params}] );
-};
-
-# error connectiong to gateway
-sub connection_error{
-    my ($kernel) = $_[KERNEL];
-    die "could not connect to server";
-    @answer = ();
-    $kernel->yield('shutdown');
-}
-
-# gateway answers
-sub got_answer {
-    my ($kernel, $heap, $input) = @_[KERNEL, HEAP, ARG0];
-    @answer = @$input;
-    $kernel->yield('shutdown');    
 }
 
 sub apply_postprocess {
@@ -252,9 +254,10 @@ Call to a user-defined subroutine on each whois result depending on whois-server
 
     $Net::Whois::Gateway::Client::POSTPROCESS{whois.crsnic.net} = \&my_func;
 
-=head1 AUTHOR
+=head1 AUTHORS
 
-Sergey Kotenko <graykot@gmail.com>
+Pavel Boldin	<davinchi@cpan.org>
+Sergey Kotenko	<graykot@gmail.com>
 
 =head1 SEE ALSO
 

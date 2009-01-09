@@ -6,9 +6,8 @@ my $build = Module::Build->new(
     module_name => 'Net::Whois::Gateway::Client',
     license  => 'perl',
     requires => {
-	'POE' => 0,
-	'POE::Component::Client::TCP' => 0,
-	'POE::Filter::Reference' => 0, 
+	'Storable' => 0,
+	'bytes' => 0, 
     },
     create_makefile_pl => 'traditional',
 );
