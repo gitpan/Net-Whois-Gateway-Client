@@ -25,7 +25,7 @@ my @registrars = ('REGRU-REG-RIPN');
 my $server  = 'whois.ripn.net',
 
 # start test
-my $tests_qty = 1 + @domains + @domains_not_reg + @ips + @registrars;
+my $tests_qty = 2 + @domains + @domains_not_reg + @ips + @registrars;
 plan tests    => 1 + $tests_qty;
 
 use_ok('Net::Whois::Gateway::Client');
@@ -46,6 +46,13 @@ SKIP: {
         if $@ || !$daemon_runned;
     
     ok( Net::Whois::Gateway::Client::ping(), 'ping' );
+
+    ### by nrg
+#    my @full_result = Net::Whois::Gateway::Client::whois(
+#        query => \@domains,
+#        force_directi  => 'yes',
+#    );
+    ### nrgs code end    
 
     my @full_result = Net::Whois::Gateway::Client::whois(
         query => \@domains,
@@ -86,6 +93,16 @@ SKIP: {
         ok( $result && !$result->{error} && $result->{whois},
             "whois for IP ".$result->{query}." from ".$result->{server} );
     }    
+
+    eval {
+	@full_result = Net::Whois::Gateway::Client::whois(    
+	    query  => [ 'pleasetesttimeoutonthisdomainrequest.com' ],
+	    timeout => 2,
+	);
+    };
+
+    ok( $@ && $@ =~ /timeout/, 'timeout requests ok' );
 }
+
 
 1;

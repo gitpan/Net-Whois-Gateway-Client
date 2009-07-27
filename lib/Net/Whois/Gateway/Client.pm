@@ -8,55 +8,134 @@ use IO::Socket::INET;
 require bytes;
 require Storable;
 
-our $VERSION = 0.08;
+our $VERSION = 0.09;
 our $DEBUG = 0;
+
+our $online;
 
 our %POSTPROCESS;
 our $default_host = "localhost";
 our $default_port = 54321;
 our @answer;
 
+
+our $configuration;
+
 our %SOCKET_FACTORY;
 
 # get whois info from gateway
-# %param: queries*, params
-sub whois {    
-    my %params = @_;
-    my $socket = _get_socket( \%params ) or die "WHOIS: cannot open socket";
+# %param: queries*, gateway_host, gateway_post, timeout, ?????
+sub whois {
+    my %param = @_;
 
-    my $frozen = Storable::nfreeze( [ \%params ] );
-    $frozen = bytes::length( $frozen ). "\0" . $frozen;
+    exists $param{query}
+	or die "No query given";
 
-    $socket->syswrite( $frozen, bytes::length( $frozen ) )
-	or die "WHOIS: Cannot syswrite to socket";
-
-    $socket->sysread( my $BUFFER, 65536 ) >= 0
-	or die "WHOIS: Cannot sysread from socket";
-
-    my @answer;
-
-    if ( 
-	$BUFFER =~ /^(\d+)\0/o and 
-	bytes::length( $BUFFER ) >= $1 + bytes::length($1) + 1 
-    ) {
-	my $answer = Storable::thaw( substr( $BUFFER, bytes::length($1) + 1, $1 ) );
-	@answer = @$answer;
-    } else {
-	die "WHOIS: Cannot parse BUFFER";
-    }
+    my @answer = _send_request( %param );
 
     return apply_postprocess(@answer);
 }
 
-sub _get_socket {
-    my $params = shift;
-    my $gateway_host = delete $params->{gateway_host} || $default_host;
-    my $gateway_port = delete $params->{gateway_port} || $default_port;
+sub _send_request {
+    my %param = @_;
+
+    my $timeout = $param{timeout} ||= 30;
+    my $buffer;
+
+    local $SIG{__DIE__} = sub {
+	$online = 0;
+	die @_;
+    };
+
+    my $resp;
+
+    foreach my $critical (0..1) {
+	$resp = eval {
+	    local $SIG{ALRM} = sub { warn "timeout\n"; die "timeout\n" }   if $timeout;
+	    alarm $timeout*5   				 if $timeout;
+
+	    my $socket = _get_socket( \%param )
+		or die "WHOIS: cannot open socket: $!";
+
+	    #use Data::Dumper;
+	    #warn Dumper $socket;
+
+#	    $socket->connected
+#		or die "WHOIS: socket is not connected";
+
+	    my $frozen = Storable::nfreeze( [ \%param ] );
+	    $frozen = bytes::length( $frozen ). "\0" . $frozen;
+
+	    $socket->syswrite( $frozen, bytes::length( $frozen ) ) > 0
+		or die "WHOIS: Cannot syswrite to socket: $!";
+
+	    $socket->sysread( $buffer, 65536 ) > 0
+		or die "WHOIS: Cannot sysread from socket: $!";
+	};
+
+	if ( $@ ) {
+	    _fail_socket( \%param );
+	    warn $@ if ! $critical && $@ ne "timeout\n";
+	}
+
+	last if $resp;
+    }
+
+    alarm 0 if $timeout;
+
+    if ( $@ ) {
+	if ( $@ eq "timeout\n" ) {
+	    die "WHOIS: timeout calling sysread/syswrite";
+	}
+	else {
+	    die $@;
+	}
+    }
+
+    my $answer;
+
+    if (
+	$buffer &&
+	$buffer =~ /^(\d+)\0/o &&
+	bytes::length( $buffer ) >= $1 + bytes::length($1) + 1 
+    ) {
+	$answer = Storable::thaw( substr( $buffer, bytes::length($1) + 1, $1 ) );
+    }
+    else {
+	die "WHOIS: Cannot parse BUFFER";
+    }
+
+    return @$answer;
+}
+
+sub _fail_socket {
+    my $param_ref = shift;
+
+    my $gateway_host = $param_ref->{gateway_host} || $default_host;
+    my $gateway_port = $param_ref->{gateway_port} || $default_port;
 
     my $addr = $gateway_host.':'.$gateway_port;
 
-    return $SOCKET_FACTORY{ $addr } if $SOCKET_FACTORY{ $addr };
+    delete $SOCKET_FACTORY{ $addr };
+}
 
+sub _get_socket {
+    my $param_ref = shift;
+
+    my $gateway_host = $param_ref->{gateway_host} || $default_host;
+    my $gateway_port = $param_ref->{gateway_port} || $default_port;
+
+    my $addr = $gateway_host.':'.$gateway_port;
+
+#    use Data::Dumper;
+#    warn Dumper \%SOCKET_FACTORY;
+
+    #warn $SOCKET_FACTORY{$addr} && $SOCKET_FACTORY{$addr}->connected;
+
+    return $SOCKET_FACTORY{ $addr } if	 $SOCKET_FACTORY{ $addr }
+				      && $SOCKET_FACTORY{ $addr }->connected;
+
+    #warn "reconnection $addr";
     return $SOCKET_FACTORY{ $addr } = IO::Socket::INET->new( $addr );
 }
 
@@ -65,13 +144,31 @@ sub close_sockets {
     %SOCKET_FACTORY = ();
 }
 
+sub configure {
+    my $new_config = shift;
+    my ($res) = eval {
+	_send_request( ping => 1, default_config => $new_config, @_ )
+    };
+
+    if ( ! $@ ) {
+	$online = 1;
+
+	if ( $res->{configured} ) {
+	    $configuration = $new_config;
+	}
+    }
+}
 
 sub ping {
-    my %params = (ping => 1);
+    my %params = (ping => 1, @_);
     my $res;
+    $online = 1;
     eval {
-        $res = whois(%params);
+        ($res) = _send_request(%params);
     };
+    if ( $res && ! $res->{configured} && $configuration ) {
+	return configure( $configuration, @_ );
+    }
     return $res;
 }
 
@@ -121,7 +218,7 @@ Net::Whois::Gateway::Client - Interface to Net::Whois::Gateway::Server
         server       => 'whois.ripn.net', # default try to auto-determine
         omit_msg     => 0,                # default 2
         use_cnames   => 1,                # default 0
-        timeout      => 60,               # default 30
+        timeout      => 10,               # default 30
         local_ips    => ['192.168.0.1'],  # default use default ip
         cache_dir    => '~/whois_temp',   # default '/tmp/whois-gateway-d'
         cache_time   => 5,                # default 1
@@ -131,7 +228,8 @@ Net::Whois::Gateway::Client - Interface to Net::Whois::Gateway::Server
         my $query = $result->{query} if $result;
         if ($result->{error}) {
             print "Can't resolve WHOIS-info for ".$result->{query}."\n";
-        } else {
+        }
+	else {
             print "QUERY: ".$result->{query}."\n";
             print "WHOIS: ".$result->{whois}."\n";
             print "SERVER: ".$result->{server}."\n";
@@ -200,7 +298,8 @@ Exapmle:
         my $query = $result->{query} if $result;
         if ($result->{error}) {
             print "Can't resolve WHOIS-info for ".$result->{query}."\n";
-        } else {
+        }
+	else {
             print "Query for: ".$result->{query}."\n";
             # process all subqueries
             my $count = scalar @{$result->{subqueries}};
@@ -231,7 +330,7 @@ Default is to use the hardcoded defaults.
 =item timeout
 
 Cancel the request if connection is not made within a specific number of seconds.
-Default 30 sec.
+Default 10 sec.
 
 =item local_ips
 
