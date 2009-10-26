@@ -8,7 +8,7 @@ use IO::Socket::INET;
 require bytes;
 require Storable;
 
-our $VERSION = 0.09;
+our $VERSION = 0.12;
 our $DEBUG = 0;
 
 our $online;
@@ -39,7 +39,7 @@ sub whois {
 sub _send_request {
     my %param = @_;
 
-    my $timeout = $param{timeout} ||= 30;
+    my $timeout = $param{timeout} || 30;
     my $buffer;
 
     local $SIG{__DIE__} = sub {
@@ -52,10 +52,15 @@ sub _send_request {
     foreach my $critical (0..1) {
 	$resp = eval {
 	    local $SIG{ALRM} = sub { warn "timeout\n"; die "timeout\n" }   if $timeout;
-	    alarm $timeout*5   				 if $timeout;
+	    alarm $timeout*1.2 				 if $timeout;
 
-	    my $socket = _get_socket( \%param )
-		or die "WHOIS: cannot open socket: $!";
+	    my ($socket, $new_socket) = _get_socket( \%param );
+		$socket or die "WHOIS: cannot open socket: $!";
+
+        if ( $new_socket && $configuration ) {
+            # repeat configuration as not critical one
+            ping( default_config => $configuration );
+        }
 
 	    #use Data::Dumper;
 	    #warn Dumper $socket;
@@ -65,12 +70,20 @@ sub _send_request {
 
 	    my $frozen = Storable::nfreeze( [ \%param ] );
 	    $frozen = bytes::length( $frozen ). "\0" . $frozen;
+    
+	    my $w = $socket->syswrite( $frozen, bytes::length( $frozen ) );
+	    
+	    if ( ! defined $w || $w <= 0 ) {
+		die "WHOIS: Cannot syswrite to socket: $!";
+	    }
 
-	    $socket->syswrite( $frozen, bytes::length( $frozen ) ) > 0
-		or die "WHOIS: Cannot syswrite to socket: $!";
+	    my $r = $socket->sysread( $buffer, 65536 );
 
-	    $socket->sysread( $buffer, 65536 ) > 0
-		or die "WHOIS: Cannot sysread from socket: $!";
+	    if ( ! defined $r || $r <= 0 ) {
+		die "WHOIS: Cannot sysread from socket: $!";
+	    }
+
+        return 1;
 	};
 
 	if ( $@ ) {
@@ -132,11 +145,13 @@ sub _get_socket {
 
     #warn $SOCKET_FACTORY{$addr} && $SOCKET_FACTORY{$addr}->connected;
 
-    return $SOCKET_FACTORY{ $addr } if	 $SOCKET_FACTORY{ $addr }
+    return ($SOCKET_FACTORY{ $addr }, 0) if	 $SOCKET_FACTORY{ $addr }
 				      && $SOCKET_FACTORY{ $addr }->connected;
 
     #warn "reconnection $addr";
-    return $SOCKET_FACTORY{ $addr } = IO::Socket::INET->new( $addr );
+    $SOCKET_FACTORY{ $addr } = IO::Socket::INET->new( $addr );
+
+    return ($SOCKET_FACTORY{ $addr }, 1);
 }
 
 sub close_sockets {
@@ -146,17 +161,7 @@ sub close_sockets {
 
 sub configure {
     my $new_config = shift;
-    my ($res) = eval {
-	_send_request( ping => 1, default_config => $new_config, @_ )
-    };
-
-    if ( ! $@ ) {
-	$online = 1;
-
-	if ( $res->{configured} ) {
-	    $configuration = $new_config;
-	}
-    }
+    $configuration = $new_config;
 }
 
 sub ping {
@@ -166,9 +171,6 @@ sub ping {
     eval {
         ($res) = _send_request(%params);
     };
-    if ( $res && ! $res->{configured} && $configuration ) {
-	return configure( $configuration, @_ );
-    }
     return $res;
 }
 

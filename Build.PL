@@ -10,6 +10,7 @@ my $build = Module::Build->new(
 	'bytes' => 0, 
     },
     create_makefile_pl => 'traditional',
+    script_files => [ 'script/nwhois.pl' ],
 );
 
 $build->create_build_script;
